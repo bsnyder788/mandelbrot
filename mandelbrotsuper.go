@@ -10,17 +10,20 @@ import (
 	"math/cmplx"
 	"math/rand"
 	"os"
+	"sync"
 )
 
 const (
 	xmin, ymin, xmax, ymax = -2, -2, +2, +2
-	width, height          = 8194, 8194
+	width, height          = 4096, 4096
 )
 
 var palette = make(map[int]color.Color)
 
 // number of sub samples to randomly take per output pixel
 var super int
+
+var mapMutex = &sync.Mutex{}
 
 func init() {
 	//default to a sub sampling 4 pixels
@@ -61,15 +64,21 @@ func main() {
 	flag.Parse()
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	//map each output pixel to a color for the final PNG render
+	var wg sync.WaitGroup
+	wg.Add(height)
 	for py := 0; py < height; py++ {
-		y := float64(py)/height*(ymax-ymin) + ymin
-		for px := 0; px < height; px++ {
-			x := float64(px)/width*(xmax-xmin) + xmin
-			//super sample using random sub pixels
-			samples := sample(x, y, super)
-			img.Set(px, py, getAvgSample(samples))
-		}
+		go func(py int) {
+			defer wg.Done()
+			y := float64(py)/height*(ymax-ymin) + ymin
+			for px := 0; px < height; px++ {
+				x := float64(px)/width*(xmax-xmin) + xmin
+				//super sample using random sub pixels
+				samples := sample(x, y, super)
+				img.Set(px, py, getAvgSample(samples))
+			}
+		}(py)
 	}
+	wg.Wait()
 	png.Encode(os.Stdout, img)
 }
 
@@ -83,6 +92,8 @@ func mandelbrot(z complex128) color.Color {
 		if value > 2 {
 			// calculate re-normalized escape count
 			norm := n + 1 - int(math.Log(math.Log(value))/math.Log(2))
+			mapMutex.Lock()
+			defer mapMutex.Unlock()
 			if palette[norm] == nil {
 				r, g, b := getAlteredBernsteinColors(n, iterations)
 				palette[norm] = color.RGBA{r, g, b, 255}
